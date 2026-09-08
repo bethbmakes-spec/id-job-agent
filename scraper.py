@@ -1,21 +1,22 @@
 """
 Core scraping / filtering logic for the Instructional Design Job Search Agent.
-Two source types:
-  A) Niche/direct L&D job boards (crawled directly with requests+BeautifulSoup)
-  B) Company career-page postings surfaced via a site-restricted search
-     (Google Custom Search JSON API against major ATS domains: Greenhouse,
-      Lever, Workday, SmartRecruiters, iCIMS, Jobvite, BambooHR, Ashby —
-      these ARE the company's own site/subdomain, not LinkedIn/Indeed)
+
+Sources:
+  A) Niche/direct L&D job boards -- each with a tailored parser function
+     since generic link-scanning misses most real site structures.
+  B) Company career-page postings surfaced via Google Custom Search
+     (site-restricted to major ATS domains: Greenhouse, Lever, Workday,
+     SmartRecruiters, iCIMS, Jobvite, BambooHR, Ashby)
 
 Run: python scraper.py
-Outputs: output/job_digest_<date>.csv and .html
+Outputs: output/job_digest_<date>.csv
 """
 import re
 import csv
-import json
 import time
 import os
 from datetime import date
+from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
@@ -27,19 +28,18 @@ from config import (
 from company_check import verify_company
 from reputation_check import check_company_reputation
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; IDJobAgent/1.0)"}
-
-SALARY_RE = re.compile(r"\$?\s?(\d{2,3}(?:,\d{3})|\d{2,3}k)\s*(?:-|to|–)\s*\$?\s?(\d{2,3}(?:,\d{3})|\d{2,3}k)", re.I)
-SINGLE_SALARY_RE = re.compile(r"\$\s?(\d{2,3}),(\d{3})")
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+}
 
 
 def parse_salary_range(text):
-    """Return (low, high) ints if a salary range is found in text, else None."""
     text = text.replace(",", "")
-    m = re.search(r"\$?\s?(\d{2,3})k\s*(?:-|to|–)\s*\$?\s?(\d{2,3})k", text, re.I)
+    m = re.search(r"\$?\s?(\d{2,3})k\s*(?:-|to|\u2013)\s*\$?\s?(\d{2,3})k", text, re.I)
     if m:
         return int(m.group(1)) * 1000, int(m.group(2)) * 1000
-    m = re.search(r"\$(\d{5,6})\s*(?:-|to|–)\s*\$?(\d{5,6})", text)
+    m = re.search(r"\$(\d{5,6})\s*(?:-|to|\u2013)\s*\$?(\d{5,6})", text)
     if m:
         return int(m.group(1)), int(m.group(2))
     return None
@@ -48,7 +48,7 @@ def parse_salary_range(text):
 def meets_salary_floor(text, floor=MIN_SALARY):
     rng = parse_salary_range(text)
     if rng is None:
-        return None  # unknown — flag for manual review rather than auto-exclude
+        return None
     low, high = rng
     return high >= floor
 
@@ -62,20 +62,14 @@ def is_excluded(text, is_remote):
 
 
 def is_hard_excluded(text, url=""):
-    """Hard excludes that apply regardless of remote status: defense
-    contractors, staffing/recruiting agencies, and offshore recruiters
-    (India/Pakistan-based third-party recruiters). Returns (excluded, reason)."""
     lower = text.lower()
     lower_url = url.lower()
-
     for kw in EXCLUDE_COMPANY_KEYWORDS:
         if kw in lower:
             return True, f"matched excluded keyword: '{kw}'"
-
     for dom in EXCLUDE_DOMAINS:
         if dom in lower_url or dom in lower:
             return True, f"matched excluded domain: '{dom}'"
-
     return False, None
 
 
@@ -107,13 +101,12 @@ def score_posting(text, is_remote):
         score += 1
     if has_benefits_mention(text):
         score += 1
-    sal = meets_salary_floor(text)
-    if sal:
+    if meets_salary_floor(text):
         score += 2
     return score
 
 
-def fetch(url, timeout=15):
+def fetch(url, timeout=20):
     try:
         r = requests.get(url, headers=HEADERS, timeout=timeout)
         r.raise_for_status()
@@ -123,41 +116,99 @@ def fetch(url, timeout=15):
         return None
 
 
+# ---------------- Per-site parsers ----------------
+
+def parse_generic_links(html, base_url, board_name):
+    soup = BeautifulSoup(html, "html.parser")
+    page_text = soup.get_text(" ", strip=True)
+    results = []
+    for a in soup.find_all("a", href=True):
+        link_text = a.get_text(strip=True)
+        if not link_text or len(link_text) < 4:
+            continue
+        if title_matches(link_text):
+            href = a["href"]
+            if href.startswith("/"):
+                href = urljoin(base_url, href)
+            results.append({"source": board_name, "title": link_text, "url": href, "raw_context": page_text[:500]})
+    return results
+
+
+def parse_remoterocketship(html, base_url, board_name):
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    cards = soup.select("a[href*='/jobs/']") or soup.find_all("a", href=True)
+    for a in cards:
+        link_text = a.get_text(" ", strip=True)
+        if not link_text or len(link_text) < 4:
+            continue
+        if title_matches(link_text) or "instructional" in link_text.lower() or "learning" in link_text.lower():
+            href = a["href"]
+            if href.startswith("/"):
+                href = urljoin(base_url, href)
+            parent_text = a.find_parent().get_text(" ", strip=True) if a.find_parent() else link_text
+            results.append({"source": board_name, "title": link_text, "url": href, "raw_context": parent_text[:500]})
+    return results
+
+
+def parse_remotive(html, base_url, board_name):
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    for a in soup.find_all("a", href=True):
+        link_text = a.get_text(" ", strip=True)
+        if not link_text:
+            continue
+        lower = link_text.lower()
+        if title_matches(link_text) or "instructional" in lower or "learning" in lower or "training" in lower:
+            href = a["href"]
+            if href.startswith("/"):
+                href = urljoin(base_url, href)
+            parent_text = a.find_parent().get_text(" ", strip=True) if a.find_parent() else link_text
+            results.append({"source": board_name, "title": link_text, "url": href, "raw_context": parent_text[:500]})
+    return results
+
+
+def parse_weworkremotely(html, base_url, board_name):
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    for li in soup.select("li.feature, li.job, article, li"):
+        text = li.get_text(" ", strip=True)
+        if not text or len(text) < 4:
+            continue
+        if title_matches(text) or "instructional" in text.lower() or "learning" in text.lower():
+            a = li.find("a", href=True)
+            if not a:
+                continue
+            href = a["href"]
+            if href.startswith("/"):
+                href = urljoin(base_url, href)
+            results.append({"source": board_name, "title": text[:120], "url": href, "raw_context": text[:500]})
+    return results
+
+
+PARSERS = {
+    "generic_links": parse_generic_links,
+    "remoterocketship": parse_remoterocketship,
+    "remotive": parse_remotive,
+    "weworkremotely": parse_weworkremotely,
+}
+
+
 def crawl_niche_boards():
-    """Very lightweight generic crawler: pulls links + surrounding text.
-    Each board's HTML structure differs — this does a best-effort keyword scan
-    of visible text and link hrefs, meant as a starting point to refine per-site
-    CSS selectors once you see real output."""
     results = []
     for board in NICHE_BOARDS:
         html = fetch(board["url"])
         if not html:
             continue
-        soup = BeautifulSoup(html, "html.parser")
-        page_text = soup.get_text(" ", strip=True)
-        for a in soup.find_all("a", href=True):
-            link_text = a.get_text(strip=True)
-            if not link_text or len(link_text) < 4:
-                continue
-            if title_matches(link_text):
-                href = a["href"]
-                if href.startswith("/"):
-                    from urllib.parse import urljoin
-                    href = urljoin(board["url"], href)
-                results.append({
-                    "source": board["name"],
-                    "title": link_text,
-                    "url": href,
-                    "raw_context": page_text[:500],
-                })
+        parser_fn = PARSERS.get(board.get("parser", "generic_links"), parse_generic_links)
+        found = parser_fn(html, board["url"], board["name"])
+        print(f"[info] {board['name']}: found {len(found)} candidate links")
+        results.extend(found)
+        time.sleep(1)
     return results
 
 
 def search_ats_sites_via_google_cse(api_key, cse_id):
-    """Search company career pages hosted on major ATS platforms (Greenhouse,
-    Lever, Workday, etc.) — this counts as 'the company's own site' since these
-    are the employer's branded application pages, not LinkedIn/Indeed.
-    Requires GOOGLE_API_KEY and GOOGLE_CSE_ID env vars / config."""
     results = []
     base = "https://www.googleapis.com/customsearch/v1"
     for title in TARGET_TITLES:
@@ -167,6 +218,9 @@ def search_ats_sites_via_google_cse(api_key, cse_id):
             try:
                 r = requests.get(base, params=params, timeout=15)
                 data = r.json()
+                if "error" in data:
+                    print(f"[warn] CSE error for {query}: {data['error'].get('message')}")
+                    continue
                 for item in data.get("items", []):
                     results.append({
                         "source": domain,
@@ -176,7 +230,7 @@ def search_ats_sites_via_google_cse(api_key, cse_id):
                     })
             except Exception as e:
                 print(f"[warn] CSE search failed for {query}: {e}")
-            time.sleep(1)  # be polite / respect rate limits
+            time.sleep(1)
     return results
 
 
@@ -184,6 +238,8 @@ def build_digest(api_key=None, cse_id=None, check_reputation=True):
     all_results = crawl_niche_boards()
     if api_key and cse_id:
         all_results += search_ats_sites_via_google_cse(api_key, cse_id)
+    else:
+        print("[warn] GOOGLE_API_KEY / GOOGLE_CSE_ID not set -- skipping company career-page search entirely.")
 
     rows = []
     excluded_log = []
@@ -212,21 +268,16 @@ def build_digest(api_key=None, cse_id=None, check_reputation=True):
             excluded_log.append({**job, "exclusion_reason": "below salary floor"})
             continue
 
-        if REQUIRE_BENEFITS_MENTION and has_benefits_mention(text) is False and sal_ok is not None:
-            pass  # don't hard-exclude on benefits since snippets are short; flag instead
-
         rep_flag, rep_notes = (False, "not checked")
         if check_reputation and api_key and cse_id:
-            company_guess = job.get("source", "")
-            rep_flag, rep_notes = check_company_reputation(company_guess, api_key, cse_id)
+            rep_flag, rep_notes = check_company_reputation(job.get("source", ""), api_key, cse_id)
 
         row_score = score_posting(text, remote)
         if rep_flag:
-            row_score -= 3  # penalize but don't hard-exclude -- human judgment call
+            row_score -= 3
 
         rows.append({
-            **job,
-            "remote": remote,
+            **job, "remote": remote,
             "salary_range_detected": parse_salary_range(text),
             "benefits_mentioned": has_benefits_mention(text),
             "bonus_mentioned": has_bonus_mention(text),

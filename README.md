@@ -5,129 +5,119 @@ Administrator, Course Developer, Learning Experience Designer, Learning
 Architect, and Training Manager roles — sourced from **company career pages
 and niche L&D job boards only**, never LinkedIn or Indeed.
 
+## Sources currently searched
+
+**Niche/direct L&D job boards** (each has its own tailored parser in `scraper.py`):
+- ATD Job Bank (may 403 — see Known Limitations)
+- Teamed for Learning
+- Remote Rocketship — L&D (most reliable source so far)
+- Remotive — Education
+- We Work Remotely
+- HigherEdJobs
+- Built In Remote
+- Chronicle of Higher Ed
+- eLearning Industry Jobs
+
+**Company career pages** via Google Custom Search, restricted to major ATS
+platforms: Greenhouse, Lever, Workday, SmartRecruiters, Paylocity, iCIMS,
+Jobvite, BambooHR, Ashby. **This only runs if `GOOGLE_API_KEY` and
+`GOOGLE_CSE_ID` are both set** — without them, you only get niche-board
+results (this is why you were only seeing Remote Rocketship hits).
+
+## Why some sources return 0 results
+
+Different sites block scrapers differently:
+- **403 Forbidden** (ATD Job Bank) = the site actively blocks non-browser
+  traffic. A realistic browser User-Agent (already added) helps some sites
+  but not all; fully bypassing this requires a headless browser tool like
+  Playwright/Selenium — not included by default to keep this lightweight.
+- **0 results but no error** (Teamed for Learning, We Work Remotely,
+  HigherEdJobs, Built In) = the page loaded fine, but its HTML structure
+  doesn't match the current parser's search pattern (common when a site
+  uses heavy JavaScript rendering, or unusual class names). These need a
+  custom parser tuned to the live HTML — open the site, view page source,
+  and tell me what job listings look like there and I'll write a matching
+  parser function.
+
+## Adding more sites yourself
+
+1. Add an entry to `NICHE_BOARDS` in `config.py`:
+   ```python
+   {"name": "Site Name", "url": "https://example.com/jobs", "parser": "generic_links"}
+   ```
+2. If `generic_links` returns 0 results for that site, that site needs a
+   custom parser function in `scraper.py` (see `parse_remoterocketship`,
+   `parse_remotive`, `parse_weworkremotely` for examples) — tell me the
+   site and I'll write one.
+
+## Getting the company-career-page search working (biggest coverage boost)
+
+If `GOOGLE_API_KEY` / `GOOGLE_CSE_ID` aren't set, you're missing the
+Greenhouse/Lever/Workday/etc. company-page search entirely — this is
+usually where the best senior-level direct-employer postings show up.
+Double check both secrets are set correctly in GitHub Actions (Settings →
+Secrets and variables → Actions) and spelled exactly `GOOGLE_API_KEY` and
+`GOOGLE_CSE_ID`.
+
 ## What it does
 
-1. **Crawls niche/direct L&D job boards** (`scraper.py: crawl_niche_boards`) —
-   ATD Job Bank, Teamed for Learning, Remote Rocketship, Remotive, We Work
-   Remotely, HigherEdJobs.
-2. **Searches company career pages directly** via Google Custom Search,
-   restricted to major ATS platforms (Greenhouse, Lever, Workday,
-   SmartRecruiters, iCIMS, Jobvite, BambooHR, Ashby). These are the
-   employer's own branded application pages — not a third-party aggregator.
-3. **Filters** out postings below $105k, tax-titled roles (unless remote),
+1. Crawls niche/direct L&D job boards with per-site parsers.
+2. Searches company career pages directly via Google Custom Search (ATS domains above).
+3. Filters out postings below $105k, tax-titled roles (unless remote),
    defense/military contractors, staffing/recruiting agencies, and offshore
-   (India/Pakistan-based) third-party recruiter postings -- only direct
+   (India/Pakistan-based) third-party recruiter postings — only direct
    employers are kept. Flags remote/bonus/benefits language for ranking.
-4. **Scores and ranks** postings (remote + bonus + benefits + salary-floor-met
+4. Scores and ranks postings (remote + bonus + benefits + salary-floor-met
    all add points) so the best matches surface first.
-5. **Checks company reputation** for red flags -- searches for Glassdoor
-   review snippets mentioning the marketing/design/creative teams and flags
-   language like "toxic culture," "high turnover," "understaffed," or
-   "creative team is ignored." Flagged companies are penalized in ranking
-   and clearly marked in red in the email, but not auto-excluded -- you
-   make the final call after a quick manual Glassdoor check.
-6. **Emails you a digest** (HTML table + CSV attachment) 3x/week.
+5. Checks company reputation for red flags — searches for Glassdoor review
+   snippets mentioning the marketing/design/creative teams and flags
+   language like "toxic culture," "high turnover," "understaffed." Flagged
+   companies are penalized in ranking and marked in red in the email, but
+   not auto-excluded.
+6. Emails you a digest (HTML table + CSV attachment) 3x/week.
 
 ## Setup (10 minutes)
 
 1. Install dependencies: `pip install -r requirements.txt`
-2. Copy `.env.example` to `.env` and fill in:
-   - `GOOGLE_API_KEY` / `GOOGLE_CSE_ID` — free tier gives 100 queries/day
-     (plenty for this use case). Sign up at
-     https://developers.google.com/custom-search/v1/overview and create a
-     Programmable Search Engine at https://programmablesearchengine.google.com/
-     configured to search the whole web (or restrict to the ATS domains in
-     `config.py`).
-   - `SMTP_USER` / `SMTP_PASS` — a Gmail address + App Password (or any SMTP
-     account) to send the digest from.
+2. Set these as environment variables / GitHub Secrets:
+   - `GOOGLE_API_KEY` / `GOOGLE_CSE_ID` — needed for company career-page search
+   - `SMTP_USER` / `SMTP_PASS` — Gmail address + App Password (not your normal password)
 3. Edit `config.py`:
    - `EMAIL_TO` — your inbox
    - `TARGET_TITLES` — add/remove title variants
    - `MIN_SALARY` — currently $105,000
-   - `EXCLUDE_KEYWORDS` — currently just tax-related terms
+   - `NICHE_BOARDS` — add more job boards
 4. Test manually: `python run_agent.py`
 5. Check `output/job_digest_<date>.csv` for results.
 
-## Scheduling (Mon/Wed/Fri, 7:30 AM MST)
+## Scheduling (Mon/Wed/Fri)
 
-**Option A — Replit Scheduled Deployment (recommended, no server needed):**
-Deploy this project on Replit and set a Scheduled Deployment with cron
-`30 14 * * 1,3,5` (7:30 AM MST = 14:30 UTC during MST; adjust for daylight
-saving if your host uses UTC year-round — Arizona does not observe DST, so
-this offset is fixed).
-
-**Option B — cron on your own machine/server:**
-```
-30 7 * * 1,3,5 cd /path/to/id-job-agent && /usr/bin/python3 run_agent.py >> agent.log 2>&1
-```
-
-**Option C — GitHub Actions** (free, runs in the cloud):
-Add a `.github/workflows/job-agent.yml` with `schedule: cron: '30 14 * * 1,3,5'`
-and store secrets (GOOGLE_API_KEY, SMTP_USER, etc.) in repo Settings > Secrets.
-
-## Reputation check (Marketing/Design team red flags)
-
-`reputation_check.py` uses the same Google Custom Search API (already
-configured for career-page discovery) to pull public Glassdoor review
-snippets mentioning the company alongside marketing/design/creative team
-terms, then scans for red-flag phrases: toxic culture, high turnover,
-understaffed, micromanagement, layoffs, low morale, burnout, "creative team
-is ignored," etc.
-
-- Flagged companies get a **-3 score penalty** (pushed lower in ranking) and
-  a red-highlighted row with a warning label in the emailed digest.
-- This is a **triage signal, not a verdict** -- Glassdoor blocks direct
-  scraping, so results come from search-engine snippets only, which may
-  miss context or nuance. Always open the actual Glassdoor page for any
-  company you're seriously considering before ruling it out or in.
-- Edit `RED_FLAG_PHRASES` and `DEPARTMENT_TERMS` in `reputation_check.py`
-  to tune sensitivity.
+Currently running via **GitHub Actions** — see `.github/workflows/job-agent.yml`
+in the repo. Cron: `30 14 * * 1,3,5` (7:30 AM Arizona time; AZ has no DST so
+this offset stays fixed year-round).
 
 ## Exclusion rules (hard filters)
 
-These apply regardless of remote status or salary:
-
 - **Defense/military contractors** — Lockheed Martin, Raytheon/RTX, Northrop
   Grumman, General Dynamics, L3Harris, Booz Allen, Leidos, SAIC, CACI,
-  Palantir, Anduril, and generic signals like "security clearance required,"
-  "DoD contractor," "cleared facility."
+  Palantir, Anduril, plus signals like "security clearance required."
 - **Staffing/recruiting agencies** — Robert Half, Randstad, Adecco, Kelly
-  Services, Insight Global, TEKsystems, Kforce, and similar third-party
-  firms, plus generic agency language like "on behalf of our client."
-- **Offshore recruiters** — firms and language patterns commonly associated
-  with India/Pakistan-based third-party recruiting (Pvt Ltd, Hexaware,
-  Mastech Digital, Genpact staffing, etc.), and explicit "recruiter based in
-  India/Pakistan" mentions.
-- **Company verification** (`company_check.py`) — cross-checks the posting
-  URL against known ATS company slugs (e.g. `greenhouse.io/acmecorp`) to
-  confirm it's the employer's own branded career page, and rejects agency
-  language ("our client," "on behalf of") even if the specific firm isn't on
-  the keyword list yet.
+  Services, Insight Global, TEKsystems, Kforce, plus "on behalf of our client."
+- **Offshore recruiters** — India/Pakistan-based third-party firms (Hexaware,
+  Mastech Digital, Genpact staffing, "Pvt Ltd" naming), and explicit
+  "recruiter based in India/Pakistan" mentions.
+- **Company verification** (`company_check.py`) — confirms the posting URL
+  matches a known ATS company slug (e.g. `greenhouse.io/acmecorp`), and
+  rejects agency language even if the firm isn't keyword-listed yet.
 
-Edit `DEFENSE_CONTRACTOR_KEYWORDS`, `STAFFING_AGENCY_KEYWORDS`,
-`OFFSHORE_RECRUITER_KEYWORDS`, and `EXCLUDE_DOMAINS` in `config.py` any time
-you spot a new company/agency you want blocked -- no code changes needed.
-
-## Known limitations & tuning notes
-
-- Some job boards (ATD Job Bank, Remote Rocketship) return 403 to basic
-  scrapers — they may require a rendered browser (Selenium/Playwright) or a
-  proper API. If they block requests, the agent still runs fine using the
-  other boards + Google CSE company-site search; consider adding
-  Playwright later if you want full coverage.
-- Salary detection is regex-based and only catches postings that state a
-  number. Many company sites omit salary — those are silently excluded by
-  default. If you'd rather see them flagged as "salary unknown — check
-  manually" instead of dropped, tell me and I'll adjust the filter logic.
-- Benefits/bonus detection is a keyword flag for ranking, not a hard filter,
-  since short search snippets often don't mention them even when true.
-- Add more companies to `ATS_DOMAINS` (e.g., specific corporate Workday
-  tenants) once you identify target employers you want prioritized.
+Edit keyword lists in `config.py` any time.
 
 ## Files
 
-- `config.py` — all tunable settings (titles, salary floor, exclusions, schedule)
-- `scraper.py` — crawls boards + searches ATS-hosted career pages, filters, scores, writes CSV
+- `config.py` — tunable settings (titles, salary floor, boards, exclusions)
+- `scraper.py` — crawls boards (per-site parsers) + ATS career-page search, filters, scores, writes CSV
+- `company_check.py` — direct-employer verification
+- `reputation_check.py` — Glassdoor red-flag triage
 - `mailer.py` — builds and sends the HTML email digest
-- `run_agent.py` — the script the scheduler actually calls
+- `run_agent.py` — entry point the scheduler calls
 - `.env.example` — template for required credentials
