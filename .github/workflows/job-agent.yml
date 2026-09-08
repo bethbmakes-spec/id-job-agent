@@ -1,4 +1,4 @@
-xname: Instructional Design Job Agent
+name: Instructional Design Job Agent
 
 on:
   schedule:
