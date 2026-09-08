@@ -25,7 +25,7 @@ jobs:
       - name: Run job agent
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_CSE_ID: ${{ secrets.Google_CSE_ID }}
+          GOOGLE_CSE_ID: ${{ secrets.GOOGLE_CSE_ID }}
           SMTP_HOST: smtp.gmail.com
           SMTP_PORT: 587
           SMTP_USER: ${{ secrets.SMTP_USER }}
