@@ -1,52 +1,105 @@
 """
-Configuration for the Instructional Design Job Search Agent.
+Configuration for the Instructional Design / L&D Job Search Agent.
 Edit the lists below to tune the search — no code changes needed elsewhere.
 """
 
+# Expanded roles you’re a fit for (instructional/creative + LMS + T&D)
+
 TARGET_TITLES = [
-    "Senior Instructional Designer", "Sr. Instructional Designer",
-    "Lead Instructional Designer", "Instructional Design Manager",
-    "Senior LMS Administrator", "LMS Administrator",
-    "Senior Course Developer", "Course Developer",
-    "Senior Learning Experience Designer", "Learning Experience Designer",
-    "Learning Architect", "Senior Learning Architect",
-    "Training Manager", "Senior Training Manager",
-    "Director of Learning and Development", "Head of Learning and Development",
+    # Core ID / LXD
+    "Senior Instructional Designer",
+    "Sr. Instructional Designer",
+    "Lead Instructional Designer",
+    "Instructional Designer",
+    "Instructional Design Consultant",
+    "Learning Experience Designer",
+    "Senior Learning Experience Designer",
+    "Learning Designer",
+    "Senior Learning Designer",
+    "Curriculum Designer",
+    "Curriculum Developer",
+    "Senior Curriculum Developer",
+    "Instructional Technologist",
+    "Educational Technologist",
+    "Learning Technologist",
+
+    # LMS / platforms
+    "Senior LMS Administrator",
+    "LMS Administrator",
+    "Learning Management System Administrator",
+    "LMS Manager",
+    "Learning Systems Manager",
+    "Learning Technology Manager",
+
+    # Training / L&D leadership (still creative side, not HR generalist)
+    "Training Manager",
+    "Senior Training Manager",
+    "Learning and Development Manager",
+    "L&D Manager",
+    "Learning Programs Manager",
+    "Enablement Manager",
+    "Learning Architect",
+    "Senior Learning Architect",
+    "Learning Consultant",
+
+    # Strategy / solutions roles adjacent to ID
+    "Learning Solutions Architect",
+    "Learning Strategist",
+    "Learning Experience Architect",
 ]
 
-MIN_SALARY = 105000
+# Salary floor (relaxed to 90k; scoring still favors higher bands)
+MIN_SALARY = 90000
+
+# Currently not excluding by generic keyword; we handle undesired roles via
+# company / agency / defense filters instead.
+EXCLUDE_KEYWORDS = []
+EXCLUDE_UNLESS_REMOTE = False
+
+# Preferences used in scoring (already wired up in scraper.py)
 REQUIRE_BENEFITS_MENTION = True
 PREFER_BONUS_MENTION = True
 PREFER_REMOTE = True
-EXCLUDE_KEYWORDS = ["tax", "taxation", "tax preparer", "tax accountant"]
-EXCLUDE_UNLESS_REMOTE = True
 
+# ATS / company career sites searched via Google Custom Search
 ATS_DOMAINS = [
-    "boards.greenhouse.io", "jobs.lever.co", "myworkdayjobs.com",
-    "jobs.smartrecruiters.com", "recruiting.paylocity.com",
-    "careers.icims.com", "jobs.jobvite.com", "*.bamboohr.com", "ashbyhq.com",
+    "boards.greenhouse.io",
+    "jobs.lever.co",
+    "myworkdayjobs.com",
+    "jobs.smartrecruiters.com",
+    "recruiting.paylocity.com",
+    "careers.icims.com",
+    "jobs.jobvite.com",
+    "*.bamboohr.com",
+    "ashbyhq.com",
 ]
 
-# Each board now has a "parser" key telling the scraper which extraction
-# strategy to use, since generic link-scanning misses most real sites.
+# Niche L&D / training job boards and communities (no LinkedIn/Indeed)
 NICHE_BOARDS = [
     {"name": "ATD Job Bank", "url": "https://jobs.td.org/jobs/", "parser": "generic_links"},
     {"name": "Teamed for Learning", "url": "https://www.teamedforlearning.com/job-board/", "parser": "generic_links"},
     {"name": "Remote Rocketship - L&D", "url": "https://www.remoterocketship.com/us/jobs/learning-and-development", "parser": "remoterocketship"},
     {"name": "Remotive - Education", "url": "https://remotive.com/remote-jobs/education", "parser": "remotive"},
-    {"name": "We Work Remotely", "url": "https://weworkremotely.com/categories/remote-management-and-finance-jobs", "parser": "weworkremotely"},
-    {"name": "HigherEdJobs", "url": "https://www.higheredjobs.com/search/advanced_action.cfm?Keyword=instructional+designer", "parser": "generic_links"},
-    {"name": "Built In Remote", "url": "https://builtin.com/jobs/remote/learning-development", "parser": "generic_links"},
-    {"name": "Chronicle of Higher Ed", "url": "https://jobs.chronicle.com/search/?q=instructional+designer", "parser": "generic_links"},
+    # Higher ed / instructional tech & design
+    {"name": "HigherEdJobs - Instructional Tech & Design", "url": "https://www.higheredjobs.com/admin/search.cfm?JobCat=218", "parser": "generic_links"},
+    # EdTech-focused ID & L&D roles
+    {"name": "EdTech - Instructional Design Jobs", "url": "https://www.edtech.com/jobs/instructional-design-jobs", "parser": "generic_links"},
+    {"name": "EdTech - Learning & Development Jobs", "url": "https://www.edtech.com/jobs/learning-development-jobs", "parser": "generic_links"},
+    # eLearning / vendor ecosystem boards
     {"name": "eLearning Industry Jobs", "url": "https://elearningindustry.com/jobs", "parser": "generic_links"},
+    {"name": "Docebo Learning Career Board", "url": "https://community.docebo.com/the-learning-career-board-55", "parser": "generic_links"},
 ]
 
+# Schedule preferences (used for docs / reference; actual scheduling is via GitHub Actions)
 RUN_DAYS = ["Mon", "Wed", "Fri"]
-RUN_TIME_LOCAL = "07:30"
+RUN_TIME_LOCAL = "07:30"  # Arizona time
 
+# Delivery settings
 DELIVERY_METHOD = "email"
 EMAIL_TO = "REPLACE_ME@example.com"
 EMAIL_SUBJECT_PREFIX = "[ID Job Agent]"
+
+# ---- Exclusion rules (same as your current file) ----
 
 DEFENSE_CONTRACTOR_KEYWORDS = [
     "lockheed martin", "raytheon", "rtx corporation", "northrop grumman",
