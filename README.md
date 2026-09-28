@@ -121,3 +121,10 @@ Edit keyword lists in `config.py` any time.
 - `mailer.py` — builds and sends the HTML email digest
 - `run_agent.py` — entry point the scheduler calls
 - `.env.example` — template for required credentials
+
+## Remote Rocketship title rule
+
+Remote Rocketship remains available for **specific vacancy titles**, but its
+generic category/location results are excluded when the title is exactly
+**Learning and Development**. This rule is source-specific: it does not remove
+specific roles containing those words, and it does not affect other sources.

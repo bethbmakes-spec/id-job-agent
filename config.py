@@ -21,6 +21,13 @@ PREFER_REMOTE = True
 EXCLUDE_KEYWORDS = ["tax", "taxation", "tax preparer", "tax accountant"]
 EXCLUDE_UNLESS_REMOTE = True
 
+# Source-specific noise filter: keep specific Remote Rocketship vacancies,
+# but reject its generic category/location pages titled only "Learning and
+# Development" (including punctuation/capitalization variants).
+GENERIC_TITLES_BY_SOURCE = {
+    "remote rocketship - l&d": ["learning and development"],
+}
+
 ATS_DOMAINS = [
     "boards.greenhouse.io", "jobs.lever.co", "myworkdayjobs.com",
     "jobs.smartrecruiters.com", "recruiting.paylocity.com",

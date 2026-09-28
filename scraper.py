@@ -23,7 +23,8 @@ from bs4 import BeautifulSoup
 from config import (
     TARGET_TITLES, MIN_SALARY, EXCLUDE_KEYWORDS, EXCLUDE_UNLESS_REMOTE,
     ATS_DOMAINS, NICHE_BOARDS, REQUIRE_BENEFITS_MENTION,
-    EXCLUDE_COMPANY_KEYWORDS, EXCLUDE_DOMAINS, REQUIRE_DIRECT_EMPLOYER
+    EXCLUDE_COMPANY_KEYWORDS, EXCLUDE_DOMAINS, REQUIRE_DIRECT_EMPLOYER,
+    GENERIC_TITLES_BY_SOURCE
 )
 from company_check import verify_company
 from reputation_check import check_company_reputation
@@ -58,6 +59,26 @@ def is_excluded(text, is_remote):
     hit = any(kw in lower for kw in EXCLUDE_KEYWORDS)
     if hit and not (EXCLUDE_UNLESS_REMOTE and is_remote):
         return True
+    return False
+
+
+def normalize_title(value):
+    """Normalize title text for exact generic-title comparisons."""
+    value = value.lower().replace("&", " and ")
+    return re.sub(r"[^a-z0-9]+", " ", value).strip()
+
+
+def is_generic_source_title(source, title):
+    """Reject generic titles only for the configured source.
+
+    This deliberately does not reject specific titles such as "Director of
+    Learning and Development" or titles from other sources.
+    """
+    source_key = source.lower().strip()
+    title_key = normalize_title(title)
+    for configured_source, generic_titles in GENERIC_TITLES_BY_SOURCE.items():
+        if configured_source in source_key:
+            return title_key in {normalize_title(item) for item in generic_titles}
     return False
 
 
@@ -247,6 +268,13 @@ def build_digest(api_key=None, cse_id=None, check_reputation=True):
         text = job["title"] + " " + job.get("raw_context", "")
         url = job.get("url", "")
         remote = looks_remote(text)
+
+        if is_generic_source_title(job.get("source", ""), job.get("title", "")):
+            excluded_log.append({
+                **job,
+                "exclusion_reason": "generic Remote Rocketship category title: Learning and Development",
+            })
+            continue
 
         hard_excluded, reason = is_hard_excluded(text, url)
         if hard_excluded:
