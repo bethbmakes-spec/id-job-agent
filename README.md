@@ -122,9 +122,9 @@ Edit keyword lists in `config.py` any time.
 - `run_agent.py` — entry point the scheduler calls
 - `.env.example` — template for required credentials
 
-## Remote Rocketship title rule
+## HigherEdJobs link repair
 
-Remote Rocketship remains available for **specific vacancy titles**, but its
-generic category/location results are excluded when the title is exactly
-**Learning and Development**. This rule is source-specific: it does not remove
-specific roles containing those words, and it does not affect other sources.
+HigherEdJobs sometimes returns links beginning with `//details.cfm/` rather
+than a complete hostname. The agent now repairs those links to
+`https://www.higheredjobs.com/details.cfm?...` and rejects malformed/hostless
+links before they enter the email digest.

@@ -16,7 +16,7 @@ import csv
 import time
 import os
 from datetime import date
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
@@ -59,26 +59,6 @@ def is_excluded(text, is_remote):
     hit = any(kw in lower for kw in EXCLUDE_KEYWORDS)
     if hit and not (EXCLUDE_UNLESS_REMOTE and is_remote):
         return True
-    return False
-
-
-def normalize_title(value):
-    """Normalize title text for exact generic-title comparisons."""
-    value = value.lower().replace("&", " and ")
-    return re.sub(r"[^a-z0-9]+", " ", value).strip()
-
-
-def is_generic_source_title(source, title):
-    """Reject generic titles only for the configured source.
-
-    This deliberately does not reject specific titles such as "Director of
-    Learning and Development" or titles from other sources.
-    """
-    source_key = source.lower().strip()
-    title_key = normalize_title(title)
-    for configured_source, generic_titles in GENERIC_TITLES_BY_SOURCE.items():
-        if configured_source in source_key:
-            return title_key in {normalize_title(item) for item in generic_titles}
     return False
 
 
@@ -137,6 +117,54 @@ def fetch(url, timeout=20):
         return None
 
 
+def normalize_title(value):
+    value = (value or "").lower().replace("&", " and ")
+    return re.sub(r"[^a-z0-9]+", " ", value).strip()
+
+
+def is_generic_source_title(source, title):
+    source_key = (source or "").lower().strip()
+    title_key = normalize_title(title)
+    for configured_source, generic_titles in GENERIC_TITLES_BY_SOURCE.items():
+        if configured_source in source_key:
+            return title_key in {normalize_title(item) for item in generic_titles}
+    return False
+
+
+def resolve_job_url(href, base_url, board_name=""):
+    """Return an absolute job URL and repair malformed HigherEdJobs links."""
+    href = (href or "").strip()
+    if not href or href.lower().startswith(("javascript:", "mailto:", "tel:")):
+        return ""
+
+    is_highered = "higheredjobs" in (board_name or "").lower() or "higheredjobs.com" in (base_url or "").lower()
+    if is_highered:
+        parsed = urlparse(href)
+        # HigherEdJobs may expose protocol-relative //details.cfm links. That
+        # would incorrectly become https://details.cfm; force its real domain.
+        if parsed.netloc.lower() == "details.cfm":
+            query = parsed.query
+            return "https://www.higheredjobs.com/details.cfm" + (f"?{query}" if query else "")
+        clean = href.lstrip("/")
+        if clean.lower().startswith("details.cfm"):
+            return urljoin("https://www.higheredjobs.com/", clean)
+        if clean.lower().startswith(("admin/details.cfm", "institution/details.cfm", "faculty/details.cfm")):
+            return urljoin("https://www.higheredjobs.com/", clean)
+
+    return urljoin(base_url, href)
+
+
+def is_valid_result_url(url):
+    """Prevent malformed or hostless hyperlinks from reaching the digest."""
+    parsed = urlparse(url or "")
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    host = parsed.netloc.lower().split(":", 1)[0]
+    if host in {"details.cfm", "admin", "institution", "faculty"}:
+        return False
+    return "." in host or host == "localhost"
+
+
 # ---------------- Per-site parsers ----------------
 
 def parse_generic_links(html, base_url, board_name):
@@ -148,9 +176,9 @@ def parse_generic_links(html, base_url, board_name):
         if not link_text or len(link_text) < 4:
             continue
         if title_matches(link_text):
-            href = a["href"]
-            if href.startswith("/"):
-                href = urljoin(base_url, href)
+            href = resolve_job_url(a["href"], base_url, board_name)
+            if not href:
+                continue
             results.append({"source": board_name, "title": link_text, "url": href, "raw_context": page_text[:500]})
     return results
 
@@ -164,9 +192,9 @@ def parse_remoterocketship(html, base_url, board_name):
         if not link_text or len(link_text) < 4:
             continue
         if title_matches(link_text) or "instructional" in link_text.lower() or "learning" in link_text.lower():
-            href = a["href"]
-            if href.startswith("/"):
-                href = urljoin(base_url, href)
+            href = resolve_job_url(a["href"], base_url, board_name)
+            if not href:
+                continue
             parent_text = a.find_parent().get_text(" ", strip=True) if a.find_parent() else link_text
             results.append({"source": board_name, "title": link_text, "url": href, "raw_context": parent_text[:500]})
     return results
@@ -181,9 +209,9 @@ def parse_remotive(html, base_url, board_name):
             continue
         lower = link_text.lower()
         if title_matches(link_text) or "instructional" in lower or "learning" in lower or "training" in lower:
-            href = a["href"]
-            if href.startswith("/"):
-                href = urljoin(base_url, href)
+            href = resolve_job_url(a["href"], base_url, board_name)
+            if not href:
+                continue
             parent_text = a.find_parent().get_text(" ", strip=True) if a.find_parent() else link_text
             results.append({"source": board_name, "title": link_text, "url": href, "raw_context": parent_text[:500]})
     return results
@@ -200,9 +228,9 @@ def parse_weworkremotely(html, base_url, board_name):
             a = li.find("a", href=True)
             if not a:
                 continue
-            href = a["href"]
-            if href.startswith("/"):
-                href = urljoin(base_url, href)
+            href = resolve_job_url(a["href"], base_url, board_name)
+            if not href:
+                continue
             results.append({"source": board_name, "title": text[:120], "url": href, "raw_context": text[:500]})
     return results
 
@@ -268,6 +296,10 @@ def build_digest(api_key=None, cse_id=None, check_reputation=True):
         text = job["title"] + " " + job.get("raw_context", "")
         url = job.get("url", "")
         remote = looks_remote(text)
+
+        if not is_valid_result_url(url):
+            excluded_log.append({**job, "exclusion_reason": "malformed or incomplete job URL"})
+            continue
 
         if is_generic_source_title(job.get("source", ""), job.get("title", "")):
             excluded_log.append({
